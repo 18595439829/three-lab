@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>body{margin:0;overflow:hidden}#tag{position:fixed;top:8px;left:8px;font:12px monospace;background:#000c;color:#0f0;padding:8px;z-index:9}</style>
+</head><body><div id="tag">运行中…（结果看控制台 F12）</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ===== 固定参数：三组唯一变量只有 plane 的覆盖面积 =====
+const PR = 2, W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(PR);          // 放大填充率，提高信噪比
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x223344);
+const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 2000);
+camera.position.set(0, 0, 800);
+camera.lookAt(0, 0, 0);
+
+// 灯只是「放大器」：让每个片元多算几轮光照，三组完全一致、不是变量
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 2);
+dir.position.set(1, 1, 2); scene.add(dir);
+for (let i = 0; i < 4; i++) {
+  const p = new THREE.PointLight(0xffffff, 30);
+  p.position.set(-300 + i * 200, 200 - i * 120, 300);
+  scene.add(p);
+}
+
+// 程序生成贴图，无外链 / CORS
+const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+const ctx = cv.getContext('2d');
+for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+  ctx.fillStyle = (x + y) % 2 ? '#4a90d9' : '#e8f0fa';
+  ctx.fillRect(x * 16, y * 16, 16, 16);
+}
+const tex = new THREE.CanvasTexture(cv);
+tex.colorSpace = THREE.SRGBColorSpace;
+
+const mat = new THREE.MeshStandardMaterial({ map: tex, metalness: 0.2, roughness: 0.6 });
+const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+plane.frustumCulled = false;         // 保证 calls 恒为 1，排除剔除变量
+scene.add(plane);
+
+// z=0 平面的可见范围（fov=75、距离 800 → 高 1227.72）
+const visH = 2 * 800 * Math.tan(camera.fov * Math.PI / 360);
+const visW = visH * camera.aspect;
+// frac = 边长比例；面积 = frac²。0.5 → 1/4 屏，0.25 → 1/16 屏
+function setCover(frac) { plane.scale.set(visW * frac, visH * frac, 1); }
+
+const GROUPS = [
+  ['① 全屏      ', 1.00],
+  ['② 1/4 面积  ', 0.50],
+  ['③ 1/16 面积 ', 0.25],
+];
+
+// ===== gl.finish() 同步计时 =====
+const gl = renderer.getContext();
+function measure(label, frac) {
+  return new Promise(resolve => {
+    let n = 0, total = 0;
+    function tick() {
+      const t0 = performance.now();
+      renderer.render(scene, camera);
+      gl.finish();
+      total += performance.now() - t0;
+      if (++n < 60) return requestAnimationFrame(tick);
+      console.log(label,
+        '| 覆盖:', (frac * frac * 100).toFixed(2) + '%',
+        '| calls:', renderer.info.render.calls,
+        '| triangles:', renderer.info.render.triangles,
+        '| 端到端 ms/帧:', (total / 60).toFixed(3));
+      resolve();
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+(async () => {
+  console.log('[参数快照]', { fov: camera.fov, near: camera.near, far: camera.far,
+    cam: camera.position.toArray(), visH: +visH.toFixed(2), visW: +visW.toFixed(2),
+    pixelRatio: renderer.getPixelRatio(), 灯数: 6, 材质: 'MeshStandardMaterial+map' });
+
+  for (const [label, frac] of GROUPS) {
+    setCover(frac);
+    for (let i = 0; i < 5; i++) { renderer.render(scene, camera); gl.finish(); } // 预热
+    await measure(label, frac);
+  }
+  document.getElementById('tag').textContent = '完成，看控制台三行输出';
+})();
+</script></body></html>

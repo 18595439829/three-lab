@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>body{margin:0;overflow:hidden}#tag{position:fixed;top:8px;left:8px;font:12px monospace;background:#000c;color:#0f0;padding:8px;z-index:9}</style>
+</head><body><div id="tag">运行中…（结果看控制台 F12）</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ===== 固定参数：三组完全一致，唯一变量只有材质 =====
+const COUNT = 100, SIZE = 120, GAP = 125, PR = 2;
+const W = innerWidth, H = innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(PR);            // 放大填充率，提高信噪比
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x223344);
+
+const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 2000);
+camera.position.set(0, 0, 800);
+camera.lookAt(0, 0, 0);
+
+// 灯光三组共用；Basic 会忽略光照，这正是"材质档位"的语义
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(1, 1, 2); scene.add(dir);
+
+// 程序生成贴图，避开外链 / CORS；三档都挂同一张 → 唯一变量仍是材质类型
+const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+const ctx = cv.getContext('2d');
+for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+  ctx.fillStyle = (x + y) % 2 ? '#4a90d9' : '#e8f0fa';
+  ctx.fillRect(x * 16, y * 16, 16, 16);
+}
+const tex = new THREE.CanvasTexture(cv);
+tex.colorSpace = THREE.SRGBColorSpace;
+
+// 10×10 平铺，几乎不重叠、铺满主要视野；仍是 100 个独立 Mesh
+const geo = new THREE.BoxGeometry(SIZE, SIZE, 20);
+const meshes = [];
+for (let i = 0; i < COUNT; i++) {
+  const col = i % 10, row = Math.floor(i / 10);
+  const m = new THREE.Mesh(geo);
+  m.position.set((col - 4.5) * GAP, (row - 4.5) * GAP, 0);
+  m.frustumCulled = false;            // 全部提交，排除视锥剔除变量
+  scene.add(m); meshes.push(m);
+}
+
+const MATS = {
+  '① Basic   ': () => new THREE.MeshBasicMaterial({ map: tex }),
+  '② Lambert ': () => new THREE.MeshLambertMaterial({ map: tex }),
+  '③ Standard': () => new THREE.MeshStandardMaterial({ map: tex, metalness: 0.2, roughness: 0.6 }),
+};
+
+// ===== gl.finish() 同步计时：把 GPU 执行时间算进来 =====
+const gl = renderer.getContext();
+function measure(label) {
+  return new Promise(resolve => {
+    let n = 0, total = 0;
+    function tick() {
+      const t0 = performance.now();
+      renderer.render(scene, camera);
+      gl.finish();
+      total += performance.now() - t0;
+      if (++n < 60) return requestAnimationFrame(tick);
+      console.log(label,
+        '| calls:', renderer.info.render.calls,
+        '| triangles:', renderer.info.render.triangles,
+        '| 端到端 ms/帧:', (total / 60).toFixed(3));
+      resolve();
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+(async () => {
+  // A 组学到的习惯：先打印参数快照
+  console.log('[参数快照]', { fov: camera.fov, near: camera.near, far: camera.far,
+    cam: camera.position.toArray(), COUNT, SIZE, pixelRatio: renderer.getPixelRatio() });
+
+  for (const [label, make] of Object.entries(MATS)) {
+    const mat = make();
+    meshes.forEach(m => m.material = mat);
+    for (let i = 0; i < 5; i++) { renderer.render(scene, camera); gl.finish(); } // 预热：换材质首次编译着色器
+    await measure(label);
+    mat.dispose();
+  }
+  document.getElementById('tag').textContent = '完成，看控制台三行输出';
+})();
+</script></body></html>

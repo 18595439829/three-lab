@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link href="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"></script>
+    <style>
+        html,
+        body,
+        #cesiumContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="cesiumContainer"></div>
+    <script>
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            baseLayer: false, // ★ 修正点：1.107+ 改名，false = 不加载任何底图
+            baseLayerPicker: false,
+            geocoder: false,
+            infoBox: false, // ★ 绕过 iframe 跨域
+            timeline: false,
+            animation: false,
+        });
+        viewer.scene.globe.baseColor = Cesium.Color.DARKSLATEGRAY;
+
+        // 武汉某点（WGS84 经纬度，度）
+        const lon = 114.305, lat = 30.593;
+
+        // --- 方式1：4326（度）---
+        console.log('EPSG:4326 度:', lon, lat);
+
+        // --- 方式2：4326 → 3857（米）---
+        const projection = new Cesium.WebMercatorProjection();
+        const mercator = projection.project(
+            new Cesium.Cartographic(
+                Cesium.Math.toRadians(lon),
+                Cesium.Math.toRadians(lat),
+                0
+            )
+        );
+        console.log('EPSG:3857 米:', mercator.x.toFixed(1), mercator.y.toFixed(1));
+
+        // --- 打个点看它在哪 ---
+        viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: { pixelSize: 12, color: Cesium.Color.RED },
+        });
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, 2000000),
+        });
+    </script>
+</body>
+
+</html>

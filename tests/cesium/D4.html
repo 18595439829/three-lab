@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link href="https://unpkg.com/cesium@1.120.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html,
+    body,
+    #app {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+  <script>
+    window.CESIUM_BASE_URL = "https://unpkg.com/cesium@1.120.0/Build/Cesium/";
+  </script>
+  <script src="https://unpkg.com/cesium@1.120.0/Build/Cesium/Cesium.js"></script>
+  <script>
+    const viewer = new Cesium.Viewer("app", {
+      baseLayer: false, // ★ 修正点：1.107+ 改名，false = 不加载任何底图
+      baseLayerPicker: false,
+      geocoder: false,
+      infoBox: false, // ★ 绕过 iframe 跨域
+      timeline: false,
+      animation: false,
+    });
+    viewer.scene.globe.baseColor = Cesium.Color.DARKSLATEGRAY;
+    // 在 flyTo 里加 orientation，把相机压到 45 度俯角
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(114.35, 30.45, 60000),
+      orientation: {
+        heading: 0,
+        pitch: Cesium.Math.toRadians(-45),   // 关键：低头 45 度
+        roll: 0,
+      },
+    });
+    console.log(
+      "logarithmicDepthBuffer =",
+      viewer.scene.logarithmicDepthBuffer,
+    );
+
+    // // ArcGIS 世界影像：免 token，URL 模板形式，跟天地图同一模式
+    // viewer.imageryLayers.addImageryProvider(
+    //   new Cesium.UrlTemplateImageryProvider({
+    //     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    //     maximumLevel: 18,
+    //   }),
+    // );
+
+    const tdt = (layer) =>
+      new Cesium.UrlTemplateImageryProvider({
+        url:
+          "https://t{s}.tianditu.gov.cn/DataServer?T=" +
+          layer +
+          "&x={x}&y={y}&l={z}&tk=63b7222eb7eecc952368b31c18a6dab2",
+        subdomains: ["0", "1", "2", "3", "4", "5", "6", "7"],
+      });
+    viewer.imageryLayers.addImageryProvider(tdt("img_w")); // 卫星影像
+    viewer.imageryLayers.addImageryProvider(tdt("cia_w")); // 中文注记（叠在上面）
+
+    // viewer.scene.debugShowCommands = true; // 每个 drawcall 用不同颜色闪烁显示
+    // viewer.scene.debugShowFramesPerSecond = true;
+
+    // 鼠标左键点击拾取坐标
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(m => {
+      const cart = viewer.camera.pickEllipsoid(m.position, Cesium.Ellipsoid.WGS84);
+      if (!cart) return;
+      const c = Cesium.Cartographic.fromCartesian(cart);
+      console.log('Cartesian3:', cart.x.toFixed(1), cart.y.toFixed(1), cart.z.toFixed(1));
+      console.log('经度:', Cesium.Math.toDegrees(c.longitude).toFixed(6),
+        '纬度:', Cesium.Math.toDegrees(c.latitude).toFixed(6),
+        '椭球高:', c.height.toFixed(1), '米');
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+
+    // heightReference 三态
+    const modes = ['NONE', 'CLAMP_TO_GROUND', 'RELATIVE_TO_GROUND'];
+    const colors = [Cesium.Color.RED, Cesium.Color.LIME, Cesium.Color.YELLOW];
+    modes.forEach((mode, i) => {
+      viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(114.30 + i * 0.03, 30.5, 20000),
+        point: { pixelSize: 16, color: colors[i], heightReference: Cesium.HeightReference[mode], },
+        label: { text: mode, font: '13px sans-serif', pixelOffset: new Cesium.Cartesian2(0, -26) },
+      });
+    });
+
+
+  </script>
+</body>
+
+</html>

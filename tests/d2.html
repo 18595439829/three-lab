@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>body{margin:0;overflow:hidden}#tag{position:fixed;top:8px;left:8px;font:13px monospace;background:#000c;color:#0f0;padding:8px;white-space:pre}</style>
+</head><body><div id="tag"></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// ===== 只改 MODE，刷新页面，共跑 4 次 =====
+const MODE = 'ortho';   // default | extreme | logdepth | ortho
+const CFG = {
+  default:  { near: 0.1,    far: 2000, log: false, ortho: false },
+  extreme:  { near: 0.0001, far: 1e7,  log: false, ortho: false },
+  logdepth: { near: 0.0001, far: 1e7,  log: true,  ortho: false },
+  ortho:    { near: 0.0001, far: 1e7,  log: false, ortho: true  },
+}[MODE];
+
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  logarithmicDepthBuffer: CFG.log,     // 构造参数，运行时改不了
+});
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x223344);
+
+const camera = CFG.ortho
+  ? new THREE.OrthographicCamera(-W/2, W/2, H/2, -H/2, CFG.near, CFG.far)
+  : new THREE.PerspectiveCamera(75, W/H, CFG.near, CFG.far);
+camera.position.set(0, 0, 800);
+camera.lookAt(0, 0, 0);
+camera.updateProjectionMatrix();       // 改 near/far 后必须调
+
+// 红在前 z=0，蓝在后 z=-5，间距 5 个世界单位
+const geo = new THREE.PlaneGeometry(500, 500);
+const red  = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff3333, side: THREE.DoubleSide }));
+const blue = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x3366ff, side: THREE.DoubleSide }));
+red.position.z = 0;
+blue.position.z = -5;
+scene.add(blue, red);   // 刻意反序添加：谁在前由深度说了算，不看添加顺序
+
+document.getElementById('tag').textContent =
+  `MODE: ${MODE}\nnear: ${CFG.near}  far: ${CFG.far}\nlogDepth: ${CFG.log}  ortho: ${CFG.ortho}`;
+console.log('[B组参数]', MODE, CFG);   // A 组学到的：先打印参数
+
+let t = 0;
+function tick() {
+  t += 0.016;
+  camera.position.x = Math.sin(t) * 30;   // 轻微摆动，让闪烁持续可见
+  camera.lookAt(0, 0, 0);
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);            // 全页只有这一个循环
+}
+tick();
+</script></body></html>

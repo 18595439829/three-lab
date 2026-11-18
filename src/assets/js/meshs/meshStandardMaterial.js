@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import scene from '../scene';
-import renderer, { refreshRender } from '../render'
+import scene from '@/assets/js/scene';
+import Camera from '../camera';
+import renderer, { refreshRender } from '@/assets/js/render'
 
-const COUNT = 3000;
+const COUNT = 100;
 const geo = new THREE.BoxGeometry(10, 10, 10);   // 沿用你的，camera 也沿用 (0,0,800)
 const pos = Array.from({ length: COUNT }, () => [
   (Math.random() - 0.5) * 300,
@@ -50,3 +51,28 @@ function measure(label) {
   build(false); await measure('①不透明');
   build(true);  await measure('②半透明');
 })();
+
+// ===== A 组：fov 实算 + project() 反验 =====
+// 1) 复位：正对原点，且必须是透视相机
+const camera = Camera.current
+camera.position.set(0, 0, 800);
+camera.lookAt(0, 0, 0);
+if (typeof controls !== 'undefined') { controls.target.set(0, 0, 0); controls.update(); }
+if (camera.isOrthographicCamera) console.warn('当前是正交相机，请切回透视再跑 A 组');
+camera.updateMatrixWorld();
+camera.updateProjectionMatrix();
+
+// 2) 从相机真实参数算，不硬编码
+const target = (typeof controls !== 'undefined') ? controls.target : new THREE.Vector3(0, 0, 0);
+const dist   = camera.position.distanceTo(target);          // 800
+const h      = 2 * dist * Math.tan(camera.fov * Math.PI / 360);  // ≈ 746.15
+const half   = h / 2;                                       // ≈ 373.07
+const ndcY   = (y) => new THREE.Vector3(0, y, 0).project(camera).y;
+
+// 3) 打印
+console.log('距离 dist       :', dist);
+console.log('可见高度 h      :', h.toFixed(2), ' 半高 half:', half.toFixed(2));
+console.log('顶边 y_ndc      :', ndcY(half).toFixed(4));      // ≈ 1.0000
+console.log('中心 y_ndc      :', ndcY(0).toFixed(4));         // ≈ 0.0000
+console.log('底边 y_ndc      :', ndcY(-half).toFixed(4));     // ≈ -1.0000
+console.log('10单位盒子占屏高:', (10 / h * 100).toFixed(2) + '%');  // ≈ 1.34%

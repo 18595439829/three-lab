@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden
+    }
+
+    #tag {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      font: 12px monospace;
+      background: #000c;
+      color: #0f0;
+      padding: 8px;
+      z-index: 9
+    }
+  </style>
+</head>
+
+<body>
+  <div id="tag">运行中…（结果看控制台 F12）</div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+    const COUNT = 100, SIZE = 120, GAP = 125, PR = 2;
+    const W = innerWidth, H = innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.info.autoReset = false; // 关掉自动清零，shadow pass 才留得下来
+    renderer.setPixelRatio(PR);
+    renderer.setSize(W, H);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x223344);
+    const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 2000);
+    camera.position.set(0, 0, 800);
+    camera.lookAt(0, 0, 0);
+
+    // 固定底光：各组一致，保证 0 盏 PointLight 时画面不全黑
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+    // 程序生成贴图，无外链 / CORS
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+    const ctx = cv.getContext('2d');
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = (x + y) % 2 ? '#4a90d9' : '#e8f0fa';
+      ctx.fillRect(x * 16, y * 16, 16, 16);
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+
+    const mat = new THREE.MeshStandardMaterial({ map: tex, metalness: 0.2, roughness: 0.6 });
+    const geo = new THREE.BoxGeometry(SIZE, SIZE, 20);
+    for (let i = 0; i < COUNT; i++) {
+      const col = i % 10, row = Math.floor(i / 10);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set((col - 4.5) * GAP, (row - 4.5) * GAP, 0);
+      m.frustumCulled = false;                    // 主 pass 与 shadow pass 都全量提交
+      m.castShadow = true; m.receiveShadow = true; // 坑①：不设就没有 shadow pass
+      scene.add(m);
+    }
+
+    // ===== gl.finish() 同步计时 =====
+    const gl = renderer.getContext();
+    function measure(label) {
+      return new Promise(resolve => {
+        let n = 0, total = 0;
+        function tick() {
+          renderer.info.reset();          // ★ 每帧帧首手动清零
+          const t0 = performance.now();
+          renderer.render(scene, camera);
+          gl.finish();
+          total += performance.now() - t0;
+          if (++n < 60) return requestAnimationFrame(tick);
+          console.log(label,
+            '| calls:', renderer.info.render.calls,
+            '| triangles:', renderer.info.render.triangles,
+            '| 端到端 ms/帧:', (total / 60).toFixed(3));
+          resolve();
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+    // 换灯数 / 切阴影都会重编译着色器，必须预热，否则首帧编译时间污染 ms
+    function warm() {
+      mat.needsUpdate = true;
+      for (let i = 0; i < 8; i++) { renderer.render(scene, camera); gl.finish(); }
+    }
+
+    const lightGroup = new THREE.Group(); scene.add(lightGroup);
+    function setPointLights(n) {
+      lightGroup.clear();
+      for (let i = 0; i < n; i++) {
+        const p = new THREE.PointLight(0xffffff, 30);
+        p.position.set(-300 + i * 200, 200 - i * 120, 300);
+        lightGroup.add(p);
+      }
+    }
+
+    (async () => {
+      console.log('[参数快照]', {
+        fov: camera.fov, near: camera.near, far: camera.far,
+        cam: camera.position.toArray(), COUNT, SIZE, pixelRatio: renderer.getPixelRatio(),
+        材质: 'MeshStandardMaterial+map', 底光: 'AmbientLight×1（各组一致）'
+      });
+
+      console.log('--- 灯光段：唯一变量 = PointLight 盏数 ---');
+      for (const n of [0, 1, 4]) {
+        setPointLights(n); warm(); await measure(`${n} 盏 PointLight`);
+      }
+
+      // 阴影段：用方向光（1 个 shadow pass），不用点光（cube map 要渲 6 面）
+      setPointLights(0);
+      const dir = new THREE.DirectionalLight(0xffffff, 2);
+      dir.position.set(200, 300, 500);
+      dir.castShadow = true;                       // 坑②：灯自身也要开
+      dir.shadow.mapSize.set(512, 512);
+      scene.add(dir);
+
+      console.log('--- 阴影段：唯一变量 = renderer.shadowMap.enabled ---');
+      for (const on of [false, true]) {
+        renderer.shadowMap.enabled = on;
+        warm(); await measure(on ? '阴影开  (enabled=true )' : '阴影关  (enabled=false)');
+      }
+      document.getElementById('tag').textContent = '完成，看控制台 5 行输出';
+    })();
+  </script>
+</body>
+
+</html>

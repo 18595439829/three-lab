@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="utf-8">
+    <title>透明材质 overdraw 对照实验（V1/V2 可切换）</title>
+    <style>
+        body {
+            margin: 0;
+            font: 14px/1.7 monospace;
+            background: #111;
+            color: #ddd;
+        }
+
+        #panel {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            background: rgba(0, 0, 0, .8);
+            padding: 14px 18px;
+            border-radius: 8px;
+            z-index: 10;
+            white-space: pre;
+        }
+
+        button {
+            font: 14px monospace;
+            padding: 6px 14px;
+            margin: 0 6px 10px 0;
+            cursor: pointer;
+        }
+
+        button.active {
+            background: #2a6;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="panel">
+        场景预览：
+        <button id="b1" class="active">V1 小盒子</button>
+        <button id="b2">V2 全屏叠层</button>
+        <button id="run">一键对照测试（约 20 秒）</button>
+        <div id="out">先用两个按钮切换场景看画面区别，再点一键对照测试。测试期间勿切换窗口/标签页。</div>
+    </div>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));   // 提高像素量，放大信号
+        renderer.info.autoReset = false;
+        document.body.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 2000);
+
+        let sceneType = 'V1';
+        let previewMode = '不透明';
+        let meshes = [];
+
+        // ---------- 片元着色器加重：让"着色成本"远大于固定开销 ----------
+        function heavyFrag(mat) {
+            mat.onBeforeCompile = (shader) => {
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <dithering_fragment>',
+                    `float acc = 0.0;
+       for (int i = 0; i < 500; i++) { acc += sin(float(i)) * 1e-7; }
+       gl_FragColor.rgb += acc;
+       #include <dithering_fragment>`
+                );
+            };
+            return mat;
+        }
+
+        // ---------- 场景构建（两个场景只有这块不同） ----------
+        function buildScene(type) {
+            sceneType = type;
+            meshes.forEach(m => scene.remove(m));
+            meshes = [];
+            if (type === 'V1') {
+                camera.position.set(0, 0, 800);
+                const geo = new THREE.BoxGeometry(10, 10, 10);
+                const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffffff, 0x888888, 0x4444ff, 0xff8844];
+                for (let i = 0; i < 10; i++) {
+                    const col = i % 5, row = Math.floor(i / 5);
+                    const mat = heavyFrag(new THREE.MeshBasicMaterial({ color: colors[i] }));
+                    const m = new THREE.Mesh(geo, mat);
+                    m.position.set(-200 + col * 100, -60 + row * 120, 0);   // 分散，互不遮挡
+                    scene.add(m); meshes.push(m);
+                }
+            } else {
+                camera.position.set(0, 0, 100);
+                const geo = new THREE.PlaneGeometry(200, 200);
+                [0xff0000, 0x00ff00, 0x0000ff].forEach((c, i) => {
+                    const mat = heavyFrag(new THREE.MeshBasicMaterial({ color: c }));
+                    const m = new THREE.Mesh(geo, mat);
+                    m.position.z = -i;                                      // 全屏叠层
+                    scene.add(m); meshes.push(m);
+                });
+            }
+            applyMode(previewMode);
+            renderPreview();
+        }
+
+        function applyMode(mode) {
+            previewMode = mode;
+            const transparent = mode === '半透明';
+            meshes.forEach(mesh => {
+                const mat = mesh.material;
+                mat.transparent = transparent;
+                mat.opacity = transparent ? 0.5 : 1;
+                mat.depthWrite = !transparent;
+                mat.needsUpdate = true;
+            });
+        }
+
+        // ---------- 计时框架（两个场景共用同一套） ----------
+        const gl = renderer.getContext();
+        const WARMUP = 30, N = 120;
+        const frame = () => new Promise(res => requestAnimationFrame(res));
+
+        function renderPreview() {
+            renderer.info.reset();
+            renderer.render(scene, camera);
+        }
+
+        async function measureScene(type) {
+            buildScene(type);
+            const results = {};
+            for (const mode of ['不透明', '半透明']) {
+                applyMode(mode);
+                for (let i = 0; i < WARMUP; i++) {
+                    renderer.info.reset(); renderer.render(scene, camera); await frame();
+                }
+                let total = 0;
+                for (let i = 0; i < N; i++) {
+                    renderer.info.reset();
+                    const t0 = performance.now();
+                    renderer.render(scene, camera);
+                    gl.finish();
+                    total += performance.now() - t0;
+                    await frame();
+                }
+                results[mode] = { avg: total / N, calls: renderer.info.render.calls };
+                await frame();
+            }
+            return results;
+        }
+
+        // ---------- UI ----------
+        const out = document.getElementById('out');
+        const b1 = document.getElementById('b1'), b2 = document.getElementById('b2');
+
+        function setActive(btn) {
+            [b1, b2].forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        b1.onclick = () => { setActive(b1); buildScene('V1'); };
+        b2.onclick = () => { setActive(b2); buildScene('V2'); };
+
+        document.getElementById('run').onclick = async () => {
+            document.getElementById('run').disabled = true;
+            out.textContent = '对照测试进行中…';
+            const v1 = await measureScene('V1');
+            const v2 = await measureScene('V2');
+            buildScene(sceneType);   // 恢复当前预览场景
+            const fmt = r => {
+                const a = r['不透明'], b = r['半透明'];
+                const diff = ((b.avg - a.avg) / a.avg * 100).toFixed(1);
+                return `  ① 不透明 : ${a.avg.toFixed(3)} ms/帧 | calls: ${a.calls}\n  ② 半透明 : ${b.avg.toFixed(3)} ms/帧 | calls: ${b.calls}\n  差异     : ${diff}%`;
+            };
+            out.textContent =
+                `─ 一键对照结果（各 120 帧平均 · gl.finish 同步 · 着色器已加重） ─
+V1 小盒子（屏占比 < 2%，overdraw ≈ 1）
+${fmt(v1)}  → 着色面积小，差异仍在噪声内
+V2 全屏叠层（overdraw = 3）
+${fmt(v2)}  → 预期半透明显著更贵（被挡像素逃不掉着色 + blend）
+结论：透明开销显形需要两个条件：overdraw 够大 + 着色够贵`;
+            document.getElementById('run').disabled = false;
+        };
+
+        buildScene('V1');
+    </script>
+</body>
+
+</html>
